@@ -49,14 +49,12 @@ contract NFTLottery is ReentrancyGuard {
     function injectBIAFunds(uint256 amount) public onlyOwner {
         require(amount > 0, "Amount must be greater than zero");
         require(BIA_TOKEN.transferFrom(msg.sender, address(this), amount), "BIA transfer failed");
-        currentJackpotBIA += amount;
         totalBIAAllocated += amount;
         emit FundsInjected(amount, 0);
     }
 
     function injectETHFunds() public payable onlyOwner {
         require(msg.value > 0, "Amount must be greater than zero");
-        currentJackpotETH += msg.value;
         totalETHAllocated += msg.value;
         emit FundsInjected(0, msg.value);
     }
