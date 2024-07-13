@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.0;
 
-interface IERC20 {
+interface IBIA {
     function transfer(address recipient, uint256 amount) external returns (bool);
-    function balanceOf(address account) external view returns (uint256);
 }
 
 contract NFTLottery {
@@ -14,7 +13,6 @@ contract NFTLottery {
     }
 
     address public owner;
-    IERC20 public BIA_TOKEN;
     uint256 public currentJackpotBIA;
     uint256 public currentJackpotETH;
     uint256 public drawCount;
@@ -23,26 +21,32 @@ contract NFTLottery {
     uint256 public minRarity = 10000; // Minimum rarity
     uint256 public maxRarity = 100000; // Fixed maximum rarity
 
-    // Data Structures for NFTs
+    IBIA public BIA_TOKEN;
+
     mapping(uint256 => NFT) public nfts;
     mapping(uint256 => uint256) public rarityScores;
-    mapping(uint256 => bool) public isNFTActive;
-    mapping(uint256 => address) public nftOwners; // Store the owner of each NFT
+    mapping(uint256 => bool) public isNFTActive; // Use a boolean mapping to track active NFTs
     mapping(address => uint256) public pendingWithdrawalsBIA;
     mapping(address => uint256) public pendingWithdrawalsETH;
-
-    uint256[] public nftIdsA; // Store IDs of Series A NFTs
-    uint256[] public nftIdsB; // Store IDs of Series B NFTs
+    mapping(uint256 => address) public nftOwners; // Mapping to track the owner of each NFT
 
     event DrawWinner(uint256[] winningNFTs, uint256 prizeAmount, string currency);
     event FundsInjected(uint256 biaAmount, uint256 ethAmount);
-    event FundsClaimed(address winner, uint256 amount, string currency);
+    event FundsClaimed(address indexed claimer, uint256 amount, string currency);
 
-    constructor() {
+    constructor(address _biaToken) {
         owner = msg.sender;
+        BIA_TOKEN = IBIA(_biaToken);
         drawCount = 0;
-        // Hardcoded BIA token contract address
-        BIA_TOKEN = IERC20(0x1234567890abcdef1234567890abcdef12345678); // Replace with actual BIA token contract address
+
+        // Initialize NFT owners and rarity scores for predefined NFTs
+        for (uint256 i = 0; i <= 7679; i++) {
+            nfts[i] = NFT(i, (i % 100000) + 10000, i < 4223 ? "A" : "B"); // Assigning sample rarity scores and series
+            rarityScores[i] = (i % 100000) + 10000;
+            nftOwners[i] = owner;
+            isNFTActive[i] = true;
+        }
+
         // Set initial BIA and ETH jackpot amounts to zero
         currentJackpotBIA = 0;
         currentJackpotETH = 0;
@@ -53,11 +57,11 @@ contract NFTLottery {
         _;
     }
 
-    function injectBIAFunds(uint256 biaAmount) public onlyOwner {
-        require(biaAmount > 0, "Amount must be greater than zero");
-        require(BIA_TOKEN.transferFrom(msg.sender, address(this), biaAmount), "BIA transfer failed");
-        totalBIAAllocated += biaAmount;
-        emit FundsInjected(biaAmount, 0);
+    function injectBIAFunds(uint256 amount) public onlyOwner {
+        require(amount > 0, "Amount must be greater than zero");
+        require(BIA_TOKEN.transfer(address(this), amount), "BIA transfer failed");
+        totalBIAAllocated += amount;
+        emit FundsInjected(amount, 0);
     }
 
     function injectETHFunds() public payable onlyOwner {
@@ -66,37 +70,11 @@ contract NFTLottery {
         emit FundsInjected(0, msg.value);
     }
 
-    function addNFTs(NFT[] memory _predefinedNFTsA, NFT[] memory _predefinedNFTsB) public onlyOwner {
-        for (uint256 i = 0; i < _predefinedNFTsA.length; i++) {
-            NFT memory nft = _predefinedNFTsA[i];
-            require(nft.id >= 0 && nft.id <= 7679, "ID out of range");
-            nfts[nft.id] = nft;
-            rarityScores[nft.id] = nft.rarityScore;
-            isNFTActive[nft.id] = true;
-            nftIdsA.push(nft.id);
-            if (nft.rarityScore < minRarity) {
-                minRarity = nft.rarityScore;
-            }
-        }
-
-        for (uint256 i = 0; i < _predefinedNFTsB.length; i++) {
-            NFT memory nft = _predefinedNFTsB[i];
-            require(nft.id >= 0 && nft.id <= 7679, "ID out of range");
-            nfts[nft.id] = nft;
-            rarityScores[nft.id] = nft.rarityScore;
-            isNFTActive[nft.id] = true;
-            nftIdsB.push(nft.id);
-            if (nft.rarityScore < minRarity) {
-                minRarity = nft.rarityScore;
-            }
-        }
-    }
-
     function generateRandomNumber(uint256 min, uint256 max) internal view returns (uint256) {
         return (uint256(keccak256(abi.encodePacked(block.timestamp, block.difficulty, msg.sender))) % (max - min + 1)) + min;
     }
 
-    function calculateJackpot() public view returns (uint256, string memory) {
+    function calculateJackpot() internal view returns (uint256, string memory) {
         uint256 amount;
         string memory currency;
 
@@ -170,16 +148,18 @@ contract NFTLottery {
             }
         }
 
-        drawCount++;
+        // Reduce the jackpot amount and allocate funds to winners
         if (keccak256(bytes(currency)) == keccak256(bytes("$BIA"))) {
             require(currentJackpotBIA >= jackpotAmount, "Insufficient BIA in jackpot");
             currentJackpotBIA -= jackpotAmount;
+            totalBIAAllocated -= jackpotAmount; // Deduct from total allocated BIA
             for (uint256 i = 0; i < winners.length; i++) {
                 pendingWithdrawalsBIA[nftOwners[winners[i]]] += jackpotAmount / winners.length;
             }
         } else {
             require(currentJackpotETH >= jackpotAmount, "Insufficient ETH in jackpot");
             currentJackpotETH -= jackpotAmount;
+            totalETHAllocated -= jackpotAmount; // Deduct from total allocated ETH
             for (uint256 i = 0; i < winners.length; i++) {
                 pendingWithdrawalsETH[nftOwners[winners[i]]] += jackpotAmount / winners.length;
             }
@@ -191,8 +171,6 @@ contract NFTLottery {
     function claimFunds() public {
         uint256 biaAmount = pendingWithdrawalsBIA[msg.sender];
         uint256 ethAmount = pendingWithdrawalsETH[msg.sender];
-
-        require(biaAmount > 0 || ethAmount > 0, "No funds to claim");
 
         if (biaAmount > 0) {
             pendingWithdrawalsBIA[msg.sender] = 0;
@@ -206,7 +184,4 @@ contract NFTLottery {
             emit FundsClaimed(msg.sender, ethAmount, "$ETH");
         }
     }
-
-    // Function to receive ETH
-    receive() external payable {}
 }
