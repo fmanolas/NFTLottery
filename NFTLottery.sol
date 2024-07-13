@@ -22,7 +22,6 @@ contract NFTLottery {
     uint256 public totalETHAllocated;
     uint256 public minRarity = 10000; // Minimum rarity
     uint256 public maxRarity = 100000; // Fixed maximum rarity
-    uint256 public Total_Funds_BIA = 12_000_000_000 * 1e18; // 12B BIA with 18 decimal places
 
     // Data Structures for NFTs
     mapping(uint256 => NFT) public nfts;
@@ -39,13 +38,14 @@ contract NFTLottery {
     event FundsInjected(uint256 biaAmount, uint256 ethAmount);
     event FundsClaimed(address winner, uint256 amount, string currency);
 
-    constructor(address _biaTokenAddress) {
+    constructor() {
         owner = msg.sender;
         drawCount = 0;
-        BIA_TOKEN = IERC20(_biaTokenAddress);
-        // Set initial BIA and ETH jackpot amounts
-        currentJackpotBIA = (Total_Funds_BIA * 1) / 100; // 1% of Total Funds as initial BIA jackpot
-        currentJackpotETH = 0; // Start with no ETH in the jackpot
+        // Hardcoded BIA token contract address
+        BIA_TOKEN = IERC20(0x1234567890abcdef1234567890abcdef12345678); // Replace with actual BIA token contract address
+        // Set initial BIA and ETH jackpot amounts to zero
+        currentJackpotBIA = 0;
+        currentJackpotETH = 0;
     }
 
     modifier onlyOwner() {
@@ -53,18 +53,17 @@ contract NFTLottery {
         _;
     }
 
-    function injectFunds(uint256 biaAmount, uint256 ethAmount) public onlyOwner {
-        require(biaAmount > 0 || ethAmount > 0, "At least one amount must be greater than zero");
-        if (biaAmount > 0) {
-            require(BIA_TOKEN.transferFrom(msg.sender, address(this), biaAmount), "BIA transfer failed");
-            currentJackpotBIA += biaAmount;
-            totalBIAAllocated += biaAmount;
-        }
-        if (ethAmount > 0) {
-            currentJackpotETH += ethAmount;
-            totalETHAllocated += ethAmount;
-        }
-        emit FundsInjected(biaAmount, ethAmount);
+    function injectBIAFunds(uint256 biaAmount) public onlyOwner {
+        require(biaAmount > 0, "Amount must be greater than zero");
+        require(BIA_TOKEN.transferFrom(msg.sender, address(this), biaAmount), "BIA transfer failed");
+        totalBIAAllocated += biaAmount;
+        emit FundsInjected(biaAmount, 0);
+    }
+
+    function injectETHFunds() public payable onlyOwner {
+        require(msg.value > 0, "Amount must be greater than zero");
+        totalETHAllocated += msg.value;
+        emit FundsInjected(0, msg.value);
     }
 
     function addNFTs(NFT[] memory _predefinedNFTsA, NFT[] memory _predefinedNFTsB) public onlyOwner {
