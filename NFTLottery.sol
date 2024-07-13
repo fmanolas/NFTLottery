@@ -168,9 +168,14 @@ contract NFTLottery {
         emit DrawWinner(winners, jackpotAmount, currency);
     }
 
-    function claimFunds() public {
+     function claimFunds(uint256 nftId) public {
+        require(isNFTActive[nftId], "NFT is not active");
+        require(nftOwners[nftId] == msg.sender, "Not the owner of the NFT");
+
         uint256 biaAmount = pendingWithdrawalsBIA[msg.sender];
         uint256 ethAmount = pendingWithdrawalsETH[msg.sender];
+
+        require(biaAmount > 0 || ethAmount > 0, "No funds to claim");
 
         if (biaAmount > 0) {
             pendingWithdrawalsBIA[msg.sender] = 0;
