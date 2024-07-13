@@ -11,7 +11,7 @@ contract NFTLottery is ReentrancyGuard {
         string series;
     }
 
-    address public owner;
+        address public owner;
     IERC20 public BIA_TOKEN;
     uint256 public currentJackpotBIA;
     uint256 public currentJackpotETH;
@@ -21,8 +21,9 @@ contract NFTLottery is ReentrancyGuard {
     uint256 public minRarity = 10000;
     uint256 public maxRarity = 100000;
 
-    uint256[] public nftIdsA; // Store IDs of Series A NFTs
-    uint256[] public nftIdsB; // Store IDs of Series B NFTs
+    uint256[] public nftIdsA;
+    uint256[] public nftIdsB;
+    mapping(uint256 => NFT) public nfts;
     mapping(uint256 => uint256) public rarityScores;
     mapping(uint256 => bool) public isNFTActive;
     mapping(uint256 => address) public nftOwners;
@@ -46,45 +47,41 @@ contract NFTLottery is ReentrancyGuard {
         _;
     }
 
+    function addNFTs(NFT[] memory _nfts, address[] memory _owners, string memory series) public onlyOwner {
+        require(_nfts.length == _owners.length, "NFTs and owners length mismatch");
+        for (uint256 i = 0; i < _nfts.length; i++) {
+            require(_nfts[i].id >= 0 && _nfts[i].id <= 7679, "ID out of range");
+            require(!isNFTActive[_nfts[i].id], "NFT already active");
+            nfts[_nfts[i].id] = _nfts[i];
+            rarityScores[_nfts[i].id] = _nfts[i].rarityScore;
+            isNFTActive[_nfts[i].id] = true;
+            nftOwners[_nfts[i].id] = _owners[i];
+
+            if (keccak256(abi.encodePacked(series)) == keccak256(abi.encodePacked("A"))) {
+                nftIdsA.push(_nfts[i].id);
+            } else if (keccak256(abi.encodePacked(series)) == keccak256(abi.encodePacked("B"))) {
+                nftIdsB.push(_nfts[i].id);
+            }
+        }
+    }
+
     function injectBIAFunds(uint256 amount) public onlyOwner {
         require(amount > 0, "Amount must be greater than zero");
         require(BIA_TOKEN.transferFrom(msg.sender, address(this), amount), "BIA transfer failed");
+        currentJackpotBIA += amount;
         totalBIAAllocated += amount;
         emit FundsInjected(amount, 0);
     }
 
     function injectETHFunds() public payable onlyOwner {
         require(msg.value > 0, "Amount must be greater than zero");
+        currentJackpotETH += msg.value;
         totalETHAllocated += msg.value;
         emit FundsInjected(0, msg.value);
     }
 
     function generateRandomNumber(uint256 min, uint256 max) internal view returns (uint256) {
         return (uint256(keccak256(abi.encodePacked(block.timestamp, block.difficulty, msg.sender))) % (max - min + 1)) + min;
-    }
-
-    function addNFTs(NFT[] memory _predefinedNFTsA, NFT[] memory _predefinedNFTsB) public onlyOwner {
-        for (uint256 i = 0; i < _predefinedNFTsA.length; i++) {
-            NFT memory nft = _predefinedNFTsA[i];
-            require(nft.id >= 0 && nft.id <= 7679, "ID out of range");
-            rarityScores[nft.id] = nft.rarityScore;
-            isNFTActive[nft.id] = true;
-            nftIdsA.push(nft.id);
-            if (nft.rarityScore < minRarity) {
-                minRarity = nft.rarityScore;
-            }
-        }
-
-        for (uint256 i = 0; i < _predefinedNFTsB.length; i++) {
-            NFT memory nft = _predefinedNFTsB[i];
-            require(nft.id >= 0 && nft.id <= 7679, "ID out of range");
-            rarityScores[nft.id] = nft.rarityScore;
-            isNFTActive[nft.id] = true;
-            nftIdsB.push(nft.id);
-            if (nft.rarityScore < minRarity) {
-                minRarity = nft.rarityScore;
-            }
-        }
     }
 
     function calculateJackpot() internal view returns (uint256, string memory) {
@@ -158,7 +155,8 @@ contract NFTLottery is ReentrancyGuard {
 
         emit DrawWinner(winners, jackpotAmount, currency);
     }
-    function claimFunds(uint256 nftId) public nonReentrant {
+    
+     function claimFunds(uint256 nftId) public nonReentrant {
         require(isNFTActive[nftId], "NFT is not active");
         require(nftOwners[nftId] == msg.sender, "Not the owner of the NFT");
 
@@ -168,13 +166,13 @@ contract NFTLottery is ReentrancyGuard {
         require(biaAmount > 0 || ethAmount > 0, "No funds to claim");
 
         if (biaAmount > 0) {
-            pendingWithdrawalsBIA[msg.sender] = 0;
+            pendingWithdrawalsBIA[msg.sender] -= biaAmount;  // Correct handling to subtract claimed amount
             require(BIA_TOKEN.transfer(msg.sender, biaAmount), "BIA transfer failed");
             emit FundsClaimed(msg.sender, biaAmount, "$BIA");
         }
 
         if (ethAmount > 0) {
-            pendingWithdrawalsETH[msg.sender] = 0;
+            pendingWithdrawalsETH[msg.sender] -= ethAmount;  // Correct handling to subtract claimed amount
             payable(msg.sender).transfer(ethAmount);
             emit FundsClaimed(msg.sender, ethAmount, "$ETH");
         }
