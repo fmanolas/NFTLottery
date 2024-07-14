@@ -3,6 +3,7 @@ pragma solidity ^0.8.20;
 
 import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 
 contract NFTLottery is ReentrancyGuard {
     struct NFT {
@@ -13,6 +14,7 @@ contract NFTLottery is ReentrancyGuard {
 
     address public owner;
     IERC20 public BIA_TOKEN;
+    IERC721 public NFT_CONTRACT;
     uint256 public currentJackpotBIA;
     uint256 public currentJackpotETH;
     uint256 public drawCount;
@@ -48,9 +50,10 @@ contract NFTLottery is ReentrancyGuard {
 
     bytes32 public lastRandomHash;
 
-    constructor(address _biaToken) {
+    constructor(address _biaToken, address _nftContract) {
         owner = msg.sender;
         BIA_TOKEN = IERC20(_biaToken);
+        NFT_CONTRACT = IERC721(_nftContract);
         drawCount = 0;
         currentJackpotBIA = 0;
         currentJackpotETH = 0;
@@ -64,11 +67,17 @@ contract NFTLottery is ReentrancyGuard {
         _;
     }
 
+    modifier onlyNFTOwner(uint256 nftId) {
+        require(NFT_CONTRACT.ownerOf(nftId) == msg.sender, "Not the owner of the specified NFT");
+        _;
+    }
+
     function addNFTs(NFT[] memory _nfts, address[] memory _owners, string memory series) public onlyOwner {
         require(_nfts.length == _owners.length, "NFTs and owners length mismatch");
         for (uint256 i = 0; i < _nfts.length; i++) {
             require(_nfts[i].id >= 0 && _nfts[i].id <= 7679, "ID out of range");
             require(!isNFTActive[_nfts[i].id], "NFT already active");
+            require(NFT_CONTRACT.ownerOf(_nfts[i].id) == _owners[i], "Owner does not own the specified NFT");
             nfts[_nfts[i].id] = _nfts[i];
             rarityScores[_nfts[i].id] = _nfts[i].rarityScore;
             isNFTActive[_nfts[i].id] = true;
@@ -226,9 +235,8 @@ contract NFTLottery is ReentrancyGuard {
         finalizeBlockNumber = 0;
     }
 
-    function claimFunds(uint256 nftId) public nonReentrant {
+    function claimFunds(uint256 nftId) public nonReentrant onlyNFTOwner(nftId) {
         require(isNFTActive[nftId], "NFT is not active");
-        require(nftOwners[nftId] == msg.sender, "Not the owner of the NFT");
 
         uint256 biaAmount = pendingWithdrawalsBIA[msg.sender];
         uint256 ethAmount = pendingWithdrawalsETH[msg.sender];
