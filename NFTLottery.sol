@@ -11,7 +11,7 @@ contract NFTLottery is ReentrancyGuard {
         string series;
     }
 
-        address public owner;
+    address public owner;
     IERC20 public BIA_TOKEN;
     uint256 public currentJackpotBIA;
     uint256 public currentJackpotETH;
@@ -80,8 +80,23 @@ contract NFTLottery is ReentrancyGuard {
         emit FundsInjected(0, msg.value);
     }
 
-    function generateRandomNumber(uint256 min, uint256 max) internal view returns (uint256) {
-        return (uint256(keccak256(abi.encodePacked(block.timestamp, block.difficulty, msg.sender))) % (max - min + 1)) + min;
+    function randomFunction1(uint256 min, uint256 max) internal view returns (uint256) {
+        return (uint256(keccak256(abi.encodePacked(blockhash(block.number - 1), block.timestamp))) % (max - min + 1)) + min;
+    }
+
+    function randomFunction2(uint256 nonce, uint256 min, uint256 max) internal view returns (uint256) {
+        return (uint256(keccak256(abi.encodePacked(msg.sender, nonce))) % (max - min + 1)) + min;
+    }
+
+    function randomFunction3(uint256 min, uint256 max) internal view returns (uint256) {
+        return (uint256(keccak256(abi.encodePacked(block.difficulty, gasleft()))) % (max - min + 1)) + min;
+    }
+
+    function combinedRandomNumber(uint256 nonce, uint256 min, uint256 max) internal view returns (uint256) {
+        uint256 rand1 = randomFunction1(min, max);
+        uint256 rand2 = randomFunction2(nonce, min, max);
+        uint256 rand3 = randomFunction3(min, max);
+        return (uint256(keccak256(abi.encodePacked(rand1, rand2, rand3))) % (max - min + 1)) + min;
     }
 
     function calculateJackpot() internal view returns (uint256, string memory) {
@@ -90,23 +105,23 @@ contract NFTLottery is ReentrancyGuard {
 
         if (drawCount < 6 || drawCount % 2 == 0) {
             currency = "$BIA";
-            amount = (generateRandomNumber(5, 20) * currentJackpotBIA) / 100;
+            amount = (combinedRandomNumber(drawCount, 5, 20) * currentJackpotBIA) / 100;
         } else {
             currency = "$ETH";
-            amount = (generateRandomNumber(5, 20) * currentJackpotETH) / 100;
+            amount = (combinedRandomNumber(drawCount, 5, 20) * currentJackpotETH) / 100;
         }
 
         return (amount, currency);
     }
 
-    function selectWinners() public onlyOwner {
-        uint256 seriesSelection = generateRandomNumber(1, 2); // 1 for Series A, 2 for Series B
-        uint256 drawType = generateRandomNumber(0, 1); // 0: Single, 1: Multiple
-        uint256 rarityMode = generateRandomNumber(0, 2); // 0: Higher, 1: Lower, 2: In-Between
+    function selectWinners(uint256 nonce) public onlyOwner {
+        uint256 seriesSelection = combinedRandomNumber(nonce, 1, 2); // 1 for Series A, 2 for Series B
+        uint256 drawType = combinedRandomNumber(nonce, 0, 1); // 0: Single, 1: Multiple
+        uint256 rarityMode = combinedRandomNumber(nonce, 0, 2); // 0: Higher, 1: Lower, 2: In-Between
 
         uint256[] memory eligibleNFTs = new uint256[](nftIdsA.length + nftIdsB.length);
         uint256 eligibleCount = 0;
-        uint256 threshold = generateRandomNumber(minRarity, maxRarity); // Random rarity threshold for comparison
+        uint256 threshold = combinedRandomNumber(nonce, minRarity, maxRarity); // Random rarity threshold for comparison
 
         uint256[] storage seriesNFTs = seriesSelection == 1 ? nftIdsA : nftIdsB;
 
@@ -131,10 +146,10 @@ contract NFTLottery is ReentrancyGuard {
         require(eligibleCount > 0, "No eligible NFTs found");
 
         (uint256 jackpotAmount, string memory currency) = calculateJackpot();
-        uint256[] memory winners = new uint256[](drawType == 0 ? 1 : (eligibleCount > 2 ? generateRandomNumber(2, eligibleCount * 2 / 3) : eligibleCount));
-    
+        uint256[] memory winners = new uint256[](drawType == 0 ? 1 : (eligibleCount > 2 ? combinedRandomNumber(nonce, 2, eligibleCount * 2 / 3) : eligibleCount));
+
         for (uint256 i = 0; i < winners.length; i++) {
-            winners[i] = eligibleNFTs[generateRandomNumber(0, eligibleCount - 1)];
+            winners[i] = eligibleNFTs[combinedRandomNumber(nonce + i, 0, eligibleCount - 1)];
         }
 
         if (keccak256(bytes(currency)) == keccak256(bytes("$BIA"))) {
@@ -155,8 +170,8 @@ contract NFTLottery is ReentrancyGuard {
 
         emit DrawWinner(winners, jackpotAmount, currency);
     }
-    
-     function claimFunds(uint256 nftId) public nonReentrant {
+
+    function claimFunds(uint256 nftId) public nonReentrant {
         require(isNFTActive[nftId], "NFT is not active");
         require(nftOwners[nftId] == msg.sender, "Not the owner of the NFT");
 
@@ -166,14 +181,15 @@ contract NFTLottery is ReentrancyGuard {
         require(biaAmount > 0 || ethAmount > 0, "No funds to claim");
 
         if (biaAmount > 0) {
-            pendingWithdrawalsBIA[msg.sender] -= biaAmount;  // Correct handling to subtract claimed amount
+            pendingWithdrawalsBIA[msg.sender] = 0;
             require(BIA_TOKEN.transfer(msg.sender, biaAmount), "BIA transfer failed");
             emit FundsClaimed(msg.sender, biaAmount, "$BIA");
         }
 
         if (ethAmount > 0) {
-            pendingWithdrawalsETH[msg.sender] -= ethAmount;  // Correct handling to subtract claimed amount
-            payable(msg.sender).transfer(ethAmount);
+            pendingWithdrawalsETH[msg.sender] = 0;
+            (bool success, ) = msg.sender.call{value: ethAmount}("");
+            require(success, "ETH transfer failed");
             emit FundsClaimed(msg.sender, ethAmount, "$ETH");
         }
     }
