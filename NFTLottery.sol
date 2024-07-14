@@ -21,6 +21,8 @@ contract NFTLottery is ReentrancyGuard {
     uint256 public minRarity = 10000;
     uint256 public maxRarity = 100000;
     uint256 public nonce;
+    uint256 public targetBlockNumber;
+    uint256 public finalizeBlockNumber;
 
     uint256[] public nftIdsA;
     uint256[] public nftIdsB;
@@ -31,6 +33,14 @@ contract NFTLottery is ReentrancyGuard {
     mapping(address => uint256) public pendingWithdrawalsBIA;
     mapping(address => uint256) public pendingWithdrawalsETH;
 
+    uint256 public gameMode;
+    uint256 public numberOfWinners;
+    uint256 public jackpotSize;
+    uint256 public seriesSelection;
+    uint256 public rarityMode;
+    uint256 public threshold;
+
+    event DrawInitialized(uint256 gameMode, uint256 numberOfWinners, uint256 jackpotSize, uint256 seriesSelection, uint256 rarityMode, uint256 threshold);
     event DrawWinner(uint256[] winningNFTs, uint256 prizeAmount, string currency);
     event FundsInjected(uint256 biaAmount, uint256 ethAmount);
     event FundsClaimed(address indexed claimer, uint256 amount, string currency);
@@ -45,6 +55,8 @@ contract NFTLottery is ReentrancyGuard {
         currentJackpotBIA = 0;
         currentJackpotETH = 0;
         nonce = 0;
+        targetBlockNumber = 0;
+        finalizeBlockNumber = 0;
     }
 
     modifier onlyOwner() {
@@ -123,13 +135,38 @@ contract NFTLottery is ReentrancyGuard {
         return (amount, currency);
     }
 
-    function selectWinners() public onlyOwner {
-        combinedRandomNumber();
+    function initializeDraw() public onlyOwner {
+        require(targetBlockNumber == 0 && finalizeBlockNumber == 0, "A draw is already in progress");
 
-        uint256 seriesSelection = (uint256(lastRandomHash) % 2) + 1; // 1 for Series A, 2 for Series B
-        uint256 drawType = (uint256(lastRandomHash) / 2 % 2); // 0: Single, 1: Multiple
-        uint256 rarityMode = (uint256(lastRandomHash) / 4 % 3); // 0: Higher, 1: Lower, 2: In-Between
-        uint256 threshold = (uint256(lastRandomHash) / 7 % (maxRarity - minRarity + 1)) + minRarity; // Random rarity threshold for comparison
+        uint256 initialRandom = combinedRandomNumber();
+
+        // Determine the mode of the game
+        gameMode = initialRandom % 2; // 0 for single winner, 1 for multiple winners
+        // Determine the number of winners
+        numberOfWinners = (initialRandom / 2 % 10) + 1; // 1 to 10 winners
+        // Determine the size of the jackpot
+        jackpotSize = (initialRandom / 12 % 20) + 1; // 1% to 20% of the current jackpot
+
+        seriesSelection = (initialRandom / 32 % 2) + 1; // 1 for Series A, 2 for Series B
+        rarityMode = (initialRandom / 64 % 3); // 0: Higher, 1: Lower, 2: In-Between
+        threshold = (initialRandom / 128 % (maxRarity - minRarity + 1)) + minRarity; // Random rarity threshold for comparison
+
+        targetBlockNumber = block.number + (initialRandom / 256 % 20) + 5; // Random delay of 5 to 25 blocks
+
+        emit DrawInitialized(gameMode, numberOfWinners, jackpotSize, seriesSelection, rarityMode, threshold);
+    }
+
+    function finalizeDraw() public onlyOwner {
+        require(targetBlockNumber > 0 && block.number >= targetBlockNumber, "Cannot finalize draw yet");
+        require(finalizeBlockNumber == 0, "Winner selection already in progress");
+
+        finalizeBlockNumber = block.number + (combinedRandomNumber() % 20) + 5; // Random delay of 5 to 25 blocks
+    }
+
+    function selectWinners() public onlyOwner {
+        require(finalizeBlockNumber > 0 && block.number >= finalizeBlockNumber, "Cannot select winners yet");
+
+        uint256 finalRandom = combinedRandomNumber();
 
         uint256[] storage seriesNFTs = seriesSelection == 1 ? nftIdsA : nftIdsB;
 
@@ -157,10 +194,13 @@ contract NFTLottery is ReentrancyGuard {
         require(eligibleCount > 0, "No eligible NFTs found");
 
         (uint256 jackpotAmount, string memory currency) = calculateJackpot();
-        uint256[] memory winners = new uint256[](drawType == 0 ? 1 : (eligibleCount > 2 ? (uint256(lastRandomHash) / 8 % (eligibleCount * 2 / 3)) + 2 : eligibleCount));
+        jackpotAmount = (jackpotAmount * jackpotSize) / 100; // Adjust jackpot size
+
+        uint256[] memory winners = new uint256[](gameMode == 0 ? 1 : (eligibleCount > numberOfWinners ? numberOfWinners : eligibleCount));
 
         for (uint256 i = 0; i < winners.length; i++) {
-            winners[i] = eligibleNFTs[uint256(lastRandomHash) / (9 + i) % eligibleCount];
+            winners[i] = eligibleNFTs[finalRandom % eligibleCount];
+            finalRandom = uint256(keccak256(abi.encodePacked(finalRandom, i))); // Update finalRandom for next selection
         }
 
         if (keccak256(bytes(currency)) == keccak256(bytes("$BIA"))) {
@@ -180,6 +220,10 @@ contract NFTLottery is ReentrancyGuard {
         }
 
         emit DrawWinner(winners, jackpotAmount, currency);
+
+        // Reset targetBlockNumber and finalizeBlockNumber for next draw
+        targetBlockNumber = 0;
+        finalizeBlockNumber = 0;
     }
 
     function claimFunds(uint256 nftId) public nonReentrant {
