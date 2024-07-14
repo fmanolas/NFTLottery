@@ -17,24 +17,23 @@ contract NFTLottery is ReentrancyGuard {
 
     address public contractOwner;
     IERC20 public biaTokenContract;
-    IERC721 public nftTokenContract;
+    IERC721 public nftContract;
     uint256 public currentBiaJackpot;
     uint256 public currentEthJackpot;
     uint256 public totalDraws;
     uint256 public totalBiaFunds;
     uint256 public totalEthFunds;
-    uint256 public minimumRarity = 10000;
-    uint256 public maximumRarity = 100000;
+    uint256 public minRarityScore = 10000;
+    uint256 public maxRarityScore = 100000;
     uint256 public randomNonce;
     uint256 public targetBlock;
     uint256 public finalizeBlock;
 
     uint256[] public seriesANFTIds;
     uint256[] public seriesBNFTIds;
-    mapping(uint256 => NFT) public nftData;
+    mapping(uint256 => NFT) public nftDetails;
     mapping(uint256 => uint256) public nftRarityScores;
     mapping(uint256 => bool) public nftActiveStatus;
-    mapping(uint256 => address) public nftOwnerAddresses;
     mapping(address => uint256) public biaPendingWithdrawals;
     mapping(address => uint256) public ethPendingWithdrawals;
 
@@ -49,20 +48,27 @@ contract NFTLottery is ReentrancyGuard {
     event DrawWinner(uint256[] winningNFTs, uint256 prizeAmount, string currency);
     event FundsInjected(uint256 biaAmount, uint256 ethAmount);
     event FundsClaimed(address indexed claimer, uint256 amount, string currency);
-    event NFTAdded(uint256 id, uint256 rarityScore, string series, address owner);
+    event NFTAdded(uint256 id, uint256 rarityScore, string series);
 
     bytes32 public lastRandomHash;
 
-    constructor(address biaTokenAddress, address nftTokenAddress) {
+    constructor(
+        address biaTokenAddress,
+        address nftContractAddress,
+        NFT[] memory seriesANFTs,
+        NFT[] memory seriesBNFTs
+    ) {
         contractOwner = msg.sender;
         biaTokenContract = IERC20(biaTokenAddress);
-        nftTokenContract = IERC721(nftTokenAddress);
+        nftContract = IERC721(nftContractAddress);
         totalDraws = 0;
         currentBiaJackpot = 0;
         currentEthJackpot = 0;
         randomNonce = 0;
         targetBlock = 0;
         finalizeBlock = 0;
+
+        addNFTs(seriesANFTs, seriesBNFTs);
     }
 
     modifier onlyContractOwner() {
@@ -71,28 +77,50 @@ contract NFTLottery is ReentrancyGuard {
     }
 
     modifier onlyNFTOwner(uint256 nftId) {
-        require(nftTokenContract.ownerOf(nftId) == msg.sender, "Not the owner of the specified NFT");
+        require(nftContract.ownerOf(nftId) == msg.sender, "Not the owner of the specified NFT");
         _;
     }
 
-    function addNFTs(NFT[] memory newNFTs, address[] memory nftOwners, string memory series) public onlyContractOwner {
-        require(newNFTs.length == nftOwners.length, "NFTs and owners length mismatch");
-        for (uint256 i = 0; i < newNFTs.length; i++) {
-            require(newNFTs[i].id >= 0 && newNFTs[i].id <= 7679, "ID out of range");
-            require(!nftActiveStatus[newNFTs[i].id], "NFT already active");
-            require(nftTokenContract.ownerOf(newNFTs[i].id) == nftOwners[i], "Owner does not own the specified NFT");
-            nftData[newNFTs[i].id] = newNFTs[i];
-            nftRarityScores[newNFTs[i].id] = newNFTs[i].rarityScore;
-            nftActiveStatus[newNFTs[i].id] = true;
-            nftOwnerAddresses[newNFTs[i].id] = nftOwners[i];
+    function addNFTs(
+        NFT[] memory seriesANFTs,
+        NFT[] memory seriesBNFTs
+    ) public onlyContractOwner {
+        for (uint256 i = 0; i < seriesANFTs.length; i++) {
+            require(seriesANFTs[i].id >= 0 && seriesANFTs[i].id <= 3839, "Series A ID out of range");
+            require(!nftActiveStatus[seriesANFTs[i].id], "Series A NFT already active");
 
-            if (keccak256(abi.encodePacked(series)) == keccak256(abi.encodePacked("A"))) {
-                seriesANFTIds.push(newNFTs[i].id);
-            } else if (keccak256(abi.encodePacked(series)) == keccak256(abi.encodePacked("B"))) {
-                seriesBNFTIds.push(newNFTs[i].id);
-            }
+            NFT memory newANFT = NFT({
+                id: seriesANFTs[i].id,
+                rarityScore: seriesANFTs[i].rarityScore,
+                series: "A"
+            });
 
-            emit NFTAdded(newNFTs[i].id, newNFTs[i].rarityScore, series, nftOwners[i]);
+            nftDetails[seriesANFTs[i].id] = newANFT;
+            nftRarityScores[seriesANFTs[i].id] = seriesANFTs[i].rarityScore;
+            nftActiveStatus[seriesANFTs[i].id] = true;
+
+            seriesANFTIds.push(seriesANFTs[i].id);
+
+            emit NFTAdded(seriesANFTs[i].id, seriesANFTs[i].rarityScore, "A");
+        }
+
+        for (uint256 i = 0; i < seriesBNFTs.length; i++) {
+            require(seriesBNFTs[i].id >= 3840 && seriesBNFTs[i].id <= 7679, "Series B ID out of range");
+            require(!nftActiveStatus[seriesBNFTs[i].id], "Series B NFT already active");
+
+            NFT memory newBNFT = NFT({
+                id: seriesBNFTs[i].id,
+                rarityScore: seriesBNFTs[i].rarityScore,
+                series: "B"
+            });
+
+            nftDetails[seriesBNFTs[i].id] = newBNFT;
+            nftRarityScores[seriesBNFTs[i].id] = seriesBNFTs[i].rarityScore;
+            nftActiveStatus[seriesBNFTs[i].id] = true;
+
+            seriesBNFTIds.push(seriesBNFTs[i].id);
+
+            emit NFTAdded(seriesBNFTs[i].id, seriesBNFTs[i].rarityScore, "B");
         }
     }
 
@@ -100,6 +128,7 @@ contract NFTLottery is ReentrancyGuard {
         require(amount > 0, "Amount must be greater than zero");
 
         // Update state before external call
+        currentBiaJackpot = currentBiaJackpot.add(amount);
         totalBiaFunds = totalBiaFunds.add(amount);
 
         require(biaTokenContract.transferFrom(msg.sender, address(this), amount), "BIA transfer failed");
@@ -109,6 +138,7 @@ contract NFTLottery is ReentrancyGuard {
 
     function injectETHFunds() public payable onlyContractOwner {
         require(msg.value > 0, "Amount must be greater than zero");
+        currentEthJackpot = currentEthJackpot.add(msg.value);
         totalEthFunds = totalEthFunds.add(msg.value);
         emit FundsInjected(0, msg.value);
     }
@@ -117,8 +147,8 @@ contract NFTLottery is ReentrancyGuard {
         return uint256(keccak256(abi.encodePacked(blockhash(block.number - 1), block.timestamp)));
     }
 
-    function randomFunction2(uint256 nonce) internal view returns (uint256) {
-        return uint256(keccak256(abi.encodePacked(msg.sender, nonce)));
+    function randomFunction2() internal view returns (uint256) {
+        return uint256(keccak256(abi.encodePacked(msg.sender, randomNonce)));
     }
 
     function randomFunction3() internal view returns (uint256) {
@@ -127,7 +157,7 @@ contract NFTLottery is ReentrancyGuard {
 
     function combinedRandomNumber() internal returns (uint256) {
         uint256 rand1 = randomFunction1();
-        uint256 rand2 = randomFunction2(randomNonce);
+        uint256 rand2 = randomFunction2();
         uint256 rand3 = randomFunction3();
         lastRandomHash = keccak256(abi.encodePacked(rand1, rand2, rand3));
         randomNonce = randomNonce.add(1);
@@ -166,9 +196,9 @@ contract NFTLottery is ReentrancyGuard {
 
         selectedSeries = (initialRandom.div(32) % 2).add(1); // 1 for Series A, 2 for Series B
         rarityMode = (initialRandom.div(64) % 3); // 0: Higher, 1: Lower, 2: In-Between
-        rarityThreshold = (initialRandom.div(128) % (maximumRarity - minimumRarity + 1)).add(minimumRarity); // Random rarity threshold for comparison
+        rarityThreshold = (initialRandom.div(128) % (maxRarityScore - minRarityScore + 1)).add(minRarityScore);
 
-        targetBlock = block.number.add(initialRandom.div(256) % 20).add(5); // Random delay of 5 to 25 blocks
+        targetBlock = block.number.add((initialRandom.div(256) % 20).add(5)); // Random delay of 5 to 25 blocks
 
         emit DrawInitialized(gameMode, winnersCount, jackpotPercentage, selectedSeries, rarityMode, rarityThreshold);
     }
@@ -185,13 +215,13 @@ contract NFTLottery is ReentrancyGuard {
 
         uint256 finalRandom = combinedRandomNumber();
 
-        uint256[] storage seriesNFTs = selectedSeries == 1 ? seriesANFTIds : seriesBNFTIds;
+        uint256[] storage selectedSeriesNFTIds = selectedSeries == 1 ? seriesANFTIds : seriesBNFTIds;
 
-        uint256[] memory eligibleNFTs = new uint256[](seriesNFTs.length);
+        uint256[] memory eligibleNFTs = new uint256[](selectedSeriesNFTIds.length);
         uint256 eligibleCount = 0;
 
-        for (uint256 i = 0; i < seriesNFTs.length; i++) {
-            uint256 id = seriesNFTs[i];
+        for (uint256 i = 0; i < selectedSeriesNFTIds.length; i++) {
+            uint256 id = selectedSeriesNFTIds[i];
             uint256 rarity = nftRarityScores[id];
 
             bool isEligible = false;
@@ -199,7 +229,7 @@ contract NFTLottery is ReentrancyGuard {
                 isEligible = true;
             } else if (rarityMode == 1 && rarity < rarityThreshold) { // Lower
                 isEligible = true;
-            } else if (rarityMode == 2 && rarity >= rarityThreshold.div(2) && rarity <= maximumRarity.mul(3).div(2)) { // In-Between
+            } else if (rarityMode == 2 && rarity >= rarityThreshold.div(2) && rarity <= maxRarityScore.mul(3).div(2)) { // In-Between
                 isEligible = true;
             }
 
@@ -230,14 +260,14 @@ contract NFTLottery is ReentrancyGuard {
             currentBiaJackpot = currentBiaJackpot.sub(jackpotAmount);
             totalBiaFunds = totalBiaFunds.sub(jackpotAmount);
             for (uint256 i = 0; i < winners.length; i++) {
-                biaPendingWithdrawals[nftOwnerAddresses[winners[i]]] = biaPendingWithdrawals[nftOwnerAddresses[winners[i]]].add(prizePerWinner.div(scaleFactor));
+                biaPendingWithdrawals[nftContract.ownerOf(winners[i])] = biaPendingWithdrawals[nftContract.ownerOf(winners[i])].add(prizePerWinner.div(scaleFactor));
             }
         } else {
             require(currentEthJackpot >= jackpotAmount, "Insufficient ETH in jackpot");
             currentEthJackpot = currentEthJackpot.sub(jackpotAmount);
             totalEthFunds = totalEthFunds.sub(jackpotAmount);
             for (uint256 i = 0; i < winners.length; i++) {
-                ethPendingWithdrawals[nftOwnerAddresses[winners[i]]] = ethPendingWithdrawals[nftOwnerAddresses[winners[i]]].add(prizePerWinner.div(scaleFactor));
+                ethPendingWithdrawals[nftContract.ownerOf(winners[i])] = ethPendingWithdrawals[nftContract.ownerOf(winners[i])].add(prizePerWinner.div(scaleFactor));
             }
         }
 
