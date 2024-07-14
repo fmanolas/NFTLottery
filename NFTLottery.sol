@@ -20,6 +20,7 @@ contract NFTLottery is ReentrancyGuard {
     uint256 public totalETHAllocated;
     uint256 public minRarity = 10000;
     uint256 public maxRarity = 100000;
+    uint256 public nonce;
 
     uint256[] public nftIdsA;
     uint256[] public nftIdsB;
@@ -33,6 +34,7 @@ contract NFTLottery is ReentrancyGuard {
     event DrawWinner(uint256[] winningNFTs, uint256 prizeAmount, string currency);
     event FundsInjected(uint256 biaAmount, uint256 ethAmount);
     event FundsClaimed(address indexed claimer, uint256 amount, string currency);
+    event NFTAdded(uint256 id, uint256 rarityScore, string series, address owner);
 
     bytes32 public lastRandomHash;
 
@@ -42,6 +44,7 @@ contract NFTLottery is ReentrancyGuard {
         drawCount = 0;
         currentJackpotBIA = 0;
         currentJackpotETH = 0;
+        nonce = 0;
     }
 
     modifier onlyOwner() {
@@ -64,6 +67,8 @@ contract NFTLottery is ReentrancyGuard {
             } else if (keccak256(abi.encodePacked(series)) == keccak256(abi.encodePacked("B"))) {
                 nftIdsB.push(_nfts[i].id);
             }
+
+            emit NFTAdded(_nfts[i].id, _nfts[i].rarityScore, series, _owners[i]);
         }
     }
 
@@ -86,19 +91,20 @@ contract NFTLottery is ReentrancyGuard {
         return uint256(keccak256(abi.encodePacked(blockhash(block.number - 1), block.timestamp)));
     }
 
-    function randomFunction2(uint256 nonce) internal view returns (uint256) {
-        return uint256(keccak256(abi.encodePacked(msg.sender, nonce)));
+    function randomFunction2(uint256 localNonce) internal view returns (uint256) {
+        return uint256(keccak256(abi.encodePacked(msg.sender, localNonce)));
     }
 
     function randomFunction3() internal view returns (uint256) {
         return uint256(keccak256(abi.encodePacked(block.difficulty, gasleft())));
     }
 
-    function combinedRandomNumber(uint256 nonce) internal returns (uint256) {
+    function combinedRandomNumber() internal returns (uint256) {
         uint256 rand1 = randomFunction1();
         uint256 rand2 = randomFunction2(nonce);
         uint256 rand3 = randomFunction3();
         lastRandomHash = keccak256(abi.encodePacked(rand1, rand2, rand3));
+        nonce++;
         return uint256(lastRandomHash);
     }
 
@@ -117,8 +123,8 @@ contract NFTLottery is ReentrancyGuard {
         return (amount, currency);
     }
 
-    function selectWinners(uint256 nonce) public onlyOwner {
-        combinedRandomNumber(nonce);
+    function selectWinners() public onlyOwner {
+        combinedRandomNumber();
 
         uint256 seriesSelection = (uint256(lastRandomHash) % 2) + 1; // 1 for Series A, 2 for Series B
         uint256 drawType = (uint256(lastRandomHash) / 2 % 2); // 0: Single, 1: Multiple
